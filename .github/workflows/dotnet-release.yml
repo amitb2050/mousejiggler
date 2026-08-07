@@ -1,0 +1,68 @@
+# New workflow for release builds.
+# This is separate from the dev branch workflow,
+# added specifically for manually-triggered builds and master-targeted releases.
+
+name: Release Builds
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types:
+      - created
+  workflow_dispatch:
+
+jobs:
+
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'master' }}
+
+    strategy:
+      matrix:
+        configuration: [Release]
+        profile: [mainline-arm64, mainline-x64, standalone-arm64, standalone-x64]
+
+    runs-on: windows-latest
+
+    env:
+      Solution_Path: MouseJiggler
+      Solution_Name: MouseJiggler/MouseJiggler.sln
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Install the .NET Core workload
+      - name: Install .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10
+          dotnet-quality: ga
+
+      # Publish application (restore will happen automatically with correct RuntimeIdentifier)
+      - name: Publish application (${{ matrix.configuration }} - ${{ matrix.profile }})
+        run: dotnet publish $env:Solution_Name -c ${{ matrix.configuration }} /p:PublishProfile=${{ matrix.profile }}
+
+      # Create zip file of published application
+      - name: Create zip archive
+        run: |
+          $publishPath = "${{ env.Solution_Path }}/bin/${{ matrix.configuration }}/publish/${{ matrix.profile }}"
+          $zipName = "MouseJiggler-${{ matrix.profile }}.zip"
+          Compress-Archive -Path "$publishPath/*" -DestinationPath $zipName
+
+      # Upload build artifacts
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build Artifacts - ${{ matrix.configuration }} - ${{ matrix.profile }}
+          path: ${{ env.Solution_Path }}/bin/${{ matrix.configuration }}/publish/${{ matrix.profile }}/
+
+      # Upload to release (only when triggered by release creation)
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MouseJiggler-${{ matrix.profile }}.zip
